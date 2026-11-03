@@ -1,0 +1,8 @@
+{
+  "name": "Chota Don's 22nd Birthday Adventure",
+  "description": "An extraordinary interactive birthday adventure game celebrating Chota Don's 22nd birthday milestone, lovingly created by British with magical quests, mini-games, fireworks, secret letter, and AI keepsakes.",
+  "requestFramePermissions": [],
+  "majorCapabilities": [
+    "MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"
+  ]
+}

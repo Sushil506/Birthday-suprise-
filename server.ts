@@ -1,0 +1,181 @@
+import express from 'express';
+import path from 'path';
+import { fileURLToPath } from 'url';
+import dotenv from 'dotenv';
+import { GoogleGenAI } from '@google/genai';
+
+dotenv.config();
+
+const __filename = fileURLToPath(import.meta.url);
+const __dirname = path.dirname(__filename);
+
+const app = express();
+const port = process.env.PORT || 3000;
+
+app.use(express.json({ limit: '10mb' }));
+
+// Initialize Google GenAI
+const ai = new GoogleGenAI({
+  apiKey: process.env.GEMINI_API_KEY,
+  httpOptions: {
+    headers: {
+      'User-Agent': 'aistudio-build',
+    },
+  },
+});
+
+const DEFAULT_SYSTEM_INSTRUCTION = `You are 'Astraea', the Enchanted Celestial Fairy and Magical Guardian of Chota Don's 22nd Birthday Adventure!
+This entire magical realm was lovingly created by British to celebrate Chota Don turning 22 years old today (with boundless love and heart 🫀).
+Key details about the celebrant:
+- Birthday Person: Chota Don 🫀 (also lovingly called Don, the sweetest yet most legendary boss of our hearts!)
+- Age: 22 (A fabulous milestone of beauty, wisdom, ambition, and joy!)
+- Gender: Girl (young woman, stylish, radiant, sweet yet feisty, unforgettable)
+- Created By: British
+
+Your personality:
+- Warm, sparkling, playful, deeply affectionate, poetic, and celebratory.
+- Acknowledge both her sweet charm and her iconic "Chota Don" persona with fond humor, admiration, and love.
+- Mention British as the loving creator of this world who planned this entire surprise.
+- You can compose personalized 22nd birthday sonnets, reveal magical future predictions for her 22nd year, share uplifting compliments, generate custom wishes, or chat with Chota Don and British.
+- Use charming emojis ✨🌸🎂🦋🌟💖🫀.`;
+
+// Multi-turn Chat API
+app.post('/api/chat', async (req, res) => {
+  try {
+    const { messages, modelTier = 'general', customRolePrompt } = req.body;
+    if (!messages || !Array.isArray(messages)) {
+      return res.status(400).json({ error: 'Messages array is required' });
+    }
+
+    // Model selection based on requirements:
+    // - gemini-4-argon for particularly complex tasks
+    // - gemini-3.8-flash for general tasks
+    // - gemini-3.1-flash-lite for tasks that should happen fast
+    let selectedModel = 'gemini-3.8-flash';
+    if (modelTier === 'complex') {
+      selectedModel = 'gemini-4-argon';
+    } else if (modelTier === 'fast') {
+      selectedModel = 'gemini-3.1-flash-lite';
+    }
+
+    const systemInstruction = customRolePrompt || DEFAULT_SYSTEM_INSTRUCTION;
+
+    // Build chat contents for multi-turn history
+    // Convert client message history format into contents structure
+    const contents = messages.map((m: { role: string; text: string }) => ({
+      role: m.role === 'assistant' || m.role === 'model' ? 'model' : 'user',
+      parts: [{ text: m.text }],
+    }));
+
+    const response = await ai.models.generateContent({
+      model: selectedModel,
+      contents,
+      config: {
+        systemInstruction,
+      },
+    });
+
+    const replyText = response.text || "May your 22nd birthday sparkle with endless love and magic, dearest Chota Don 🫀! ✨💖";
+
+    return res.json({
+      text: replyText,
+      modelUsed: selectedModel,
+    });
+  } catch (error: any) {
+    console.error('Error in /api/chat:', error);
+    return res.status(500).json({
+      error: error.message || 'Failed to generate fairy chat response',
+    });
+  }
+});
+
+// Image Generation API using gemini-3-pro-image-preview
+// Supports user-specified image size (1K, 2K, 4K)
+app.post('/api/generate-image', async (req, res) => {
+  try {
+    const {
+      prompt,
+      imageSize = '1K',
+      aspectRatio = '1:1',
+    } = req.body;
+
+    if (!prompt) {
+      return res.status(400).json({ error: 'Prompt is required' });
+    }
+
+    const validSizes = ['1K', '2K', '4K'];
+    const finalSize = validSizes.includes(imageSize) ? imageSize : '1K';
+
+    const validAspectRatios = ['1:1', '3:4', '4:3', '9:16', '16:9'];
+    const finalAspectRatio = validAspectRatios.includes(aspectRatio) ? aspectRatio : '1:1';
+
+    // Model specified in requirement: gemini-3-pro-image-preview
+    const response = await ai.models.generateContent({
+      model: 'gemini-3-pro-image-preview',
+      contents: {
+        parts: [{ text: prompt }],
+      },
+      config: {
+        imageConfig: {
+          aspectRatio: finalAspectRatio,
+          imageSize: finalSize as '1K' | '2K' | '4K',
+        },
+      },
+    });
+
+    let imageUrl: string | null = null;
+    let descriptionText: string = '';
+
+    for (const part of response.candidates?.[0]?.content?.parts ?? []) {
+      if (part.inlineData?.data) {
+        const mime = part.inlineData.mimeType || 'image/png';
+        imageUrl = `data:${mime};base64,${part.inlineData.data}`;
+      } else if (part.text) {
+        descriptionText += part.text;
+      }
+    }
+
+    if (!imageUrl) {
+      return res.status(500).json({
+        error: 'No image was generated by the model. Please refine your magical prompt.',
+        description: descriptionText,
+      });
+    }
+
+    return res.json({
+      imageUrl,
+      prompt,
+      imageSize: finalSize,
+      aspectRatio: finalAspectRatio,
+      modelUsed: 'gemini-3-pro-image-preview',
+    });
+  } catch (error: any) {
+    console.error('Error in /api/generate-image:', error);
+    return res.status(500).json({
+      error: error.message || 'Failed to generate image keepsake',
+    });
+  }
+});
+
+// Mount Vite or static server
+async function startServer() {
+  if (process.env.NODE_ENV !== 'production') {
+    const { createServer: createViteServer } = await import('vite');
+    const vite = await createViteServer({
+      server: { middlewareMode: true },
+      appType: 'spa',
+    });
+    app.use(vite.middlewares);
+  } else {
+    app.use(express.static(path.resolve(__dirname, 'dist')));
+    app.get('*', (_req, res) => {
+      res.sendFile(path.resolve(__dirname, 'dist/index.html'));
+    });
+  }
+
+  app.listen(port, () => {
+    console.log(`Server listening on port ${port}`);
+  });
+}
+
+startServer();
